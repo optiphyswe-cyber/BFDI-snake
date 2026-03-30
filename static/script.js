@@ -6,18 +6,26 @@ const levelEl = document.getElementById("level");
 const bestScoreEl = document.getElementById("bestScore");
 
 const startOverlay = document.getElementById("startOverlay");
+const pauseOverlay = document.getElementById("pauseOverlay");
 const gameOverOverlay = document.getElementById("gameOverOverlay");
 const gameOverText = document.getElementById("gameOverText");
+const catchFlash = document.getElementById("catchFlash");
 
 const startButton = document.getElementById("startButton");
+const resumeButton = document.getElementById("resumeButton");
 const restartButton = document.getElementById("restartButton");
 const pauseButton = document.getElementById("pauseButton");
 const resetButton = document.getElementById("resetButton");
-
 const controlButtons = document.querySelectorAll(".ctrl-btn");
 
-const GRID_COUNT = 15;
+const GRID_SIZE = 15;
+const BASE_SPEED = 180;
+const MIN_SPEED = 72;
+const SPEED_STEP = 12;
+
 let tileSize = 24;
+let lastTouchX = 0;
+let lastTouchY = 0;
 
 const collectibleFiles = [
   "bread.png",
@@ -31,116 +39,101 @@ const collectibleFiles = [
 ];
 
 const images = {};
-let loadedCount = 0;
-let totalImages = collectibleFiles.length + 2;
+let loadedImages = 0;
+const totalImages = collectibleFiles.length + 2;
 
-const astorOpen = new Image();
-astorOpen.src = "/static/astor-oppen-mun.png";
-astorOpen.onload = imageLoaded;
-
-const astorClosed = new Image();
-astorClosed.src = "/static/astor-stang-mun.png";
-astorClosed.onload = imageLoaded;
-
-images["astorOpen"] = astorOpen;
-images["astorClosed"] = astorClosed;
-
-collectibleFiles.forEach((file) => {
-  const img = new Image();
-  img.src = `/static/${file}`;
-  img.onload = imageLoaded;
-  images[file] = img;
-});
-
-function imageLoaded() {
-  loadedCount++;
+function onImageLoaded() {
+  loadedImages++;
 }
 
+function loadImage(key, path) {
+  const img = new Image();
+  img.src = path;
+  img.onload = onImageLoaded;
+  images[key] = img;
+}
+
+loadImage("astorOpen", "/static/astor-oppen-mun.png");
+loadImage("astorClosed", "/static/astor-stang-mun.png");
+
+collectibleFiles.forEach((file) => {
+  loadImage(file, `/static/${file}`);
+});
+
 function resizeCanvas() {
-  const size = Math.min(window.innerWidth - 20, 520);
-  const safeSize = Math.max(280, size);
-  canvas.width = safeSize;
-  canvas.height = safeSize;
-  tileSize = canvas.width / GRID_COUNT;
+  const wrap = canvas.parentElement;
+  const size = Math.min(wrap.clientWidth, 560);
+  canvas.width = size;
+  canvas.height = size;
+  tileSize = canvas.width / GRID_SIZE;
+  draw();
 }
 
 window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
 
 let snake = [];
 let direction = "RIGHT";
-let nextDirection = "RIGHT";
-
+let queuedDirection = "RIGHT";
 let item = null;
+
 let score = 0;
+let bestScore = Number(localStorage.getItem("astor-snake-best") || 0);
 let level = 1;
-let bestScore = Number(localStorage.getItem("bfdi-best-score") || 0);
+let speed = BASE_SPEED;
 
-let gameInterval = null;
-let moveSpeed = 220;
-const minSpeed = 70;
-const levelStep = 18;
-
-let isRunning = false;
-let isGameOver = false;
-let mouthOpen = true;
-
-let touchStartX = 0;
-let touchStartY = 0;
+let running = false;
+let gameOver = false;
+let loop = null;
+let mouthOpen = false;
+let lastMoveTime = 0;
+let animationFrame = null;
 
 bestScoreEl.textContent = bestScore;
 
-function gridToPixel(value) {
-  return value * tileSize;
+function gridPos(x, y) {
+  return { x, y };
 }
 
-function randomGridPosition() {
-  return {
-    x: Math.floor(Math.random() * GRID_COUNT),
-    y: Math.floor(Math.random() * GRID_COUNT)
-  };
-}
-
-function positionsEqual(a, b) {
+function samePos(a, b) {
   return a.x === b.x && a.y === b.y;
 }
 
-function getRandomCollectible() {
-  const randomIndex = Math.floor(Math.random() * collectibleFiles.length);
-  return collectibleFiles[randomIndex];
-}
-
-function spawnItem() {
-  let newPos = randomGridPosition();
-
-  while (snake.some(segment => positionsEqual(segment, newPos))) {
-    newPos = randomGridPosition();
-  }
-
-  item = {
-    x: newPos.x,
-    y: newPos.y,
-    file: getRandomCollectible()
+function randomGridCell() {
+  return {
+    x: Math.floor(Math.random() * GRID_SIZE),
+    y: Math.floor(Math.random() * GRID_SIZE)
   };
 }
 
-function resetGameState() {
+function setRandomItem() {
+  let pos = randomGridCell();
+
+  while (snake.some(seg => samePos(seg, pos))) {
+    pos = randomGridCell();
+  }
+
+  const file = collectibleFiles[Math.floor(Math.random() * collectibleFiles.length)];
+  item = { ...pos, file, pulse: 0 };
+}
+
+function resetState() {
   snake = [
-    { x: 7, y: 7 },
-    { x: 6, y: 7 },
-    { x: 5, y: 7 }
+    gridPos(7, 7),
+    gridPos(6, 7),
+    gridPos(5, 7)
   ];
 
   direction = "RIGHT";
-  nextDirection = "RIGHT";
-
+  queuedDirection = "RIGHT";
   score = 0;
   level = 1;
-  moveSpeed = 220;
-  isGameOver = false;
-  mouthOpen = true;
+  speed = BASE_SPEED;
+  running = false;
+  gameOver = false;
+  mouthOpen = false;
+  lastMoveTime = 0;
 
-  spawnItem();
+  setRandomItem();
   updateHud();
 }
 
@@ -150,42 +143,39 @@ function updateHud() {
   bestScoreEl.textContent = bestScore;
 }
 
-function updateBestScore() {
+function updateBest() {
   if (score > bestScore) {
     bestScore = score;
-    localStorage.setItem("bfdi-best-score", String(bestScore));
-    bestScoreEl.textContent = bestScore;
+    localStorage.setItem("astor-snake-best", String(bestScore));
   }
 }
 
-function updateLevelAndSpeed() {
+function updateDifficulty() {
   level = Math.floor(score / 4) + 1;
-  moveSpeed = Math.max(minSpeed, 220 - (level - 1) * levelStep);
+  speed = Math.max(MIN_SPEED, BASE_SPEED - (level - 1) * SPEED_STEP);
   updateHud();
-  restartLoop();
 }
 
-function restartLoop() {
-  if (gameInterval) clearInterval(gameInterval);
-  if (isRunning && !isGameOver) {
-    gameInterval = setInterval(gameTick, moveSpeed);
-  }
+function directionAllowed(next) {
+  if (direction === "LEFT" && next === "RIGHT") return false;
+  if (direction === "RIGHT" && next === "LEFT") return false;
+  if (direction === "UP" && next === "DOWN") return false;
+  if (direction === "DOWN" && next === "UP") return false;
+  return true;
 }
 
-function setDirection(newDir) {
-  if (newDir === "LEFT" && direction !== "RIGHT") nextDirection = "LEFT";
-  if (newDir === "RIGHT" && direction !== "LEFT") nextDirection = "RIGHT";
-  if (newDir === "UP" && direction !== "DOWN") nextDirection = "UP";
-  if (newDir === "DOWN" && direction !== "UP") nextDirection = "DOWN";
+function setDirection(next) {
+  if (!directionAllowed(next)) return;
+  queuedDirection = next;
 }
 
 document.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
 
-  if (key === "arrowleft" || key === "a") setDirection("LEFT");
-  if (key === "arrowright" || key === "d") setDirection("RIGHT");
   if (key === "arrowup" || key === "w") setDirection("UP");
   if (key === "arrowdown" || key === "s") setDirection("DOWN");
+  if (key === "arrowleft" || key === "a") setDirection("LEFT");
+  if (key === "arrowright" || key === "d") setDirection("RIGHT");
 
   if (key === " ") {
     e.preventDefault();
@@ -193,136 +183,264 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-controlButtons.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    setDirection(btn.dataset.dir);
-  });
-
-  btn.addEventListener("touchstart", (e) => {
+controlButtons.forEach((button) => {
+  button.addEventListener("click", () => setDirection(button.dataset.dir));
+  button.addEventListener("touchstart", (e) => {
     e.preventDefault();
-    setDirection(btn.dataset.dir);
+    setDirection(button.dataset.dir);
   }, { passive: false });
 });
 
 canvas.addEventListener("touchstart", (e) => {
-  const touch = e.touches[0];
-  touchStartX = touch.clientX;
-  touchStartY = touch.clientY;
+  const t = e.touches[0];
+  lastTouchX = t.clientX;
+  lastTouchY = t.clientY;
 }, { passive: true });
 
 canvas.addEventListener("touchend", (e) => {
-  const touch = e.changedTouches[0];
-  const dx = touch.clientX - touchStartX;
-  const dy = touch.clientY - touchStartY;
-
+  const t = e.changedTouches[0];
+  const dx = t.clientX - lastTouchX;
+  const dy = t.clientY - lastTouchY;
   const absX = Math.abs(dx);
   const absY = Math.abs(dy);
-  const threshold = 20;
+  const threshold = 18;
 
   if (absX < threshold && absY < threshold) return;
 
   if (absX > absY) {
-    if (dx > 0) setDirection("RIGHT");
-    else setDirection("LEFT");
+    setDirection(dx > 0 ? "RIGHT" : "LEFT");
   } else {
-    if (dy > 0) setDirection("DOWN");
-    else setDirection("UP");
+    setDirection(dy > 0 ? "DOWN" : "UP");
   }
 }, { passive: true });
 
 startButton.addEventListener("click", startGame);
+resumeButton.addEventListener("click", resumeGame);
 restartButton.addEventListener("click", restartGame);
 pauseButton.addEventListener("click", togglePause);
 resetButton.addEventListener("click", restartGame);
 
-canvas.addEventListener("click", () => {
-  if (!isRunning && !isGameOver) startGame();
-});
+function startGame() {
+  if (loadedImages < totalImages) return;
+  startOverlay.classList.add("hidden");
+  pauseOverlay.classList.add("hidden");
+  gameOverOverlay.classList.add("hidden");
+  running = true;
+  gameOver = false;
+  pauseButton.textContent = "Pausa";
+}
+
+function resumeGame() {
+  pauseOverlay.classList.add("hidden");
+  running = true;
+  pauseButton.textContent = "Pausa";
+}
+
+function restartGame() {
+  resetState();
+  startOverlay.classList.add("hidden");
+  pauseOverlay.classList.add("hidden");
+  gameOverOverlay.classList.add("hidden");
+  running = true;
+  pauseButton.textContent = "Pausa";
+}
+
+function togglePause() {
+  if (gameOver || startOverlay.classList.contains("hidden") === false) return;
+
+  running = !running;
+  pauseButton.textContent = running ? "Pausa" : "Fortsätt";
+
+  if (!running) {
+    pauseOverlay.classList.remove("hidden");
+  } else {
+    pauseOverlay.classList.add("hidden");
+  }
+}
+
+function triggerCatchEffect() {
+  catchFlash.classList.remove("hidden");
+  catchFlash.classList.remove("flash-restart");
+  void catchFlash.offsetWidth;
+  setTimeout(() => {
+    catchFlash.classList.add("hidden");
+  }, 220);
+
+  if (navigator.vibrate) {
+    navigator.vibrate(35);
+  }
+}
+
+function triggerDeathEffect() {
+  if (navigator.vibrate) {
+    navigator.vibrate([60, 40, 80]);
+  }
+}
+
+function moveHead(head, dir) {
+  const next = { x: head.x, y: head.y };
+
+  if (dir === "UP") next.y -= 1;
+  if (dir === "DOWN") next.y += 1;
+  if (dir === "LEFT") next.x -= 1;
+  if (dir === "RIGHT") next.x += 1;
+
+  return next;
+}
+
+function hitsWall(pos) {
+  return pos.x < 0 || pos.y < 0 || pos.x >= GRID_SIZE || pos.y >= GRID_SIZE;
+}
+
+function hitsSelf(pos) {
+  return snake.some(seg => samePos(seg, pos));
+}
+
+function tick() {
+  if (!running || gameOver) return;
+
+  if (directionAllowed(queuedDirection)) {
+    direction = queuedDirection;
+  }
+
+  const newHead = moveHead(snake[0], direction);
+  mouthOpen = !mouthOpen;
+
+  if (hitsWall(newHead) || hitsSelf(newHead)) {
+    gameOver = true;
+    running = false;
+    updateBest();
+    updateHud();
+    triggerDeathEffect();
+    gameOverText.textContent = `Poäng: ${score} • Nivå: ${level}`;
+    gameOverOverlay.classList.remove("hidden");
+    return;
+  }
+
+  snake.unshift(newHead);
+
+  if (samePos(newHead, item)) {
+    score++;
+    updateBest();
+    updateDifficulty();
+    setRandomItem();
+    triggerCatchEffect();
+  } else {
+    snake.pop();
+    updateHud();
+  }
+}
+
+function drawRoundedRect(x, y, w, h, r, fillStyle) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
+}
 
 function drawBackground() {
-  for (let row = 0; row < GRID_COUNT; row++) {
-    for (let col = 0; col < GRID_COUNT; col++) {
-      ctx.fillStyle = (row + col) % 2 === 0 ? "#f8fafc" : "#eaf2ff";
-      ctx.fillRect(gridToPixel(col), gridToPixel(row), tileSize, tileSize);
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const px = x * tileSize;
+      const py = y * tileSize;
+      const warm = (x + y) % 2 === 0 ? "#fff8dc" : "#ffefbf";
+      drawRoundedRect(
+        px + tileSize * 0.03,
+        py + tileSize * 0.03,
+        tileSize * 0.94,
+        tileSize * 0.94,
+        tileSize * 0.18,
+        warm
+      );
     }
   }
 }
 
-function drawItem() {
+function drawItem(time) {
   if (!item) return;
 
   const img = images[item.file];
-  const px = gridToPixel(item.x);
-  const py = gridToPixel(item.y);
-  const padding = tileSize * 0.08;
+  const px = item.x * tileSize;
+  const py = item.y * tileSize;
+  const pulse = 1 + Math.sin(time * 0.008) * 0.06;
+  const size = tileSize * 0.78 * pulse;
+  const offset = (tileSize - size) / 2;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(255, 196, 0, 0.35)";
+  ctx.shadowBlur = 14;
 
   if (img && img.complete) {
-    ctx.drawImage(
-      img,
-      px + padding,
-      py + padding,
-      tileSize - padding * 2,
-      tileSize - padding * 2
-    );
+    ctx.drawImage(img, px + offset, py + offset, size, size);
   } else {
     ctx.fillStyle = "#ef4444";
     ctx.beginPath();
-    ctx.arc(px + tileSize / 2, py + tileSize / 2, tileSize * 0.32, 0, Math.PI * 2);
+    ctx.arc(px + tileSize / 2, py + tileSize / 2, tileSize * 0.28, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  ctx.restore();
 }
 
-function drawSnake() {
-  for (let i = snake.length - 1; i >= 0; i--) {
+function drawBody() {
+  for (let i = snake.length - 1; i >= 1; i--) {
     const seg = snake[i];
-    const px = gridToPixel(seg.x);
-    const py = gridToPixel(seg.y);
+    const px = seg.x * tileSize;
+    const py = seg.y * tileSize;
+    const inner = tileSize * 0.16;
+    const color = i % 2 === 0 ? "#60a5fa" : "#3b82f6";
 
-    if (i === 0) {
-      drawAstorHead(px, py);
-    } else {
-      drawBodySegment(px, py, i);
-    }
+    ctx.save();
+    ctx.shadowColor = "rgba(59, 130, 246, 0.22)";
+    ctx.shadowBlur = 8;
+    drawRoundedRect(
+      px + inner,
+      py + inner,
+      tileSize - inner * 2,
+      tileSize - inner * 2,
+      tileSize * 0.22,
+      color
+    );
+    ctx.restore();
   }
 }
 
-function drawBodySegment(px, py, index) {
-  const radius = tileSize * 0.22;
-
-  ctx.fillStyle = index % 2 === 0 ? "#60a5fa" : "#3b82f6";
-  roundRect(ctx, px + tileSize * 0.08, py + tileSize * 0.08, tileSize * 0.84, tileSize * 0.84, radius);
-  ctx.fill();
-
-  ctx.strokeStyle = "rgba(255,255,255,0.45)";
-  ctx.lineWidth = 2;
-  ctx.stroke();
+function headAngleFromDirection(dir) {
+  if (dir === "RIGHT") return 0;
+  if (dir === "DOWN") return Math.PI / 2;
+  if (dir === "LEFT") return Math.PI;
+  if (dir === "UP") return -Math.PI / 2;
+  return 0;
 }
 
-function drawAstorHead(px, py) {
-  const img = mouthOpen ? images.astorOpen : images.astorClosed;
-  const padding = tileSize * 0.02;
+function drawHead() {
+  const head = snake[0];
+  const px = head.x * tileSize;
+  const py = head.y * tileSize;
   const centerX = px + tileSize / 2;
   const centerY = py + tileSize / 2;
 
+  const img = mouthOpen ? images.astorOpen : images.astorClosed;
+  const bob = mouthOpen ? 1.04 : 0.98;
+  const size = tileSize * 1.08 * bob;
+
   ctx.save();
   ctx.translate(centerX, centerY);
-
-  let angle = 0;
-  if (direction === "RIGHT") angle = 0;
-  if (direction === "DOWN") angle = Math.PI / 2;
-  if (direction === "LEFT") angle = Math.PI;
-  if (direction === "UP") angle = -Math.PI / 2;
-
-  ctx.rotate(angle);
+  ctx.rotate(headAngleFromDirection(direction));
+  ctx.shadowColor = "rgba(249, 115, 22, 0.32)";
+  ctx.shadowBlur = 16;
 
   if (img && img.complete) {
-    ctx.drawImage(
-      img,
-      -tileSize / 2 + padding,
-      -tileSize / 2 + padding,
-      tileSize - padding * 2,
-      tileSize - padding * 2
-    );
+    ctx.drawImage(img, -size / 2, -size / 2, size, size);
   } else {
     ctx.fillStyle = "#f59e0b";
     ctx.beginPath();
@@ -333,134 +451,39 @@ function drawAstorHead(px, py) {
   ctx.restore();
 }
 
-function roundRect(context, x, y, width, height, radius) {
-  context.beginPath();
-  context.moveTo(x + radius, y);
-  context.lineTo(x + width - radius, y);
-  context.quadraticCurveTo(x + width, y, x + width, y + radius);
-  context.lineTo(x + width, y + height - radius);
-  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-  context.lineTo(x + radius, y + height);
-  context.quadraticCurveTo(x, y + height, x, y + height - radius);
-  context.lineTo(x, y + radius);
-  context.quadraticCurveTo(x, y, x + radius, y);
-  context.closePath();
-}
-
-function draw() {
+function draw(time = 0) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawBackground();
-  drawItem();
-  drawSnake();
+  drawItem(time);
+  drawBody();
+  if (snake.length > 0) drawHead();
 }
 
-function moveHeadPosition(head) {
-  const nextHead = { x: head.x, y: head.y };
+function gameLoop(time) {
+  if (!lastMoveTime) lastMoveTime = time;
 
-  if (nextDirection === "LEFT") nextHead.x -= 1;
-  if (nextDirection === "RIGHT") nextHead.x += 1;
-  if (nextDirection === "UP") nextHead.y -= 1;
-  if (nextDirection === "DOWN") nextHead.y += 1;
-
-  return nextHead;
-}
-
-function hitWall(head) {
-  return (
-    head.x < 0 ||
-    head.y < 0 ||
-    head.x >= GRID_COUNT ||
-    head.y >= GRID_COUNT
-  );
-}
-
-function hitSelf(head) {
-  return snake.some(segment => positionsEqual(segment, head));
-}
-
-function gameTick() {
-  if (!isRunning || isGameOver) return;
-
-  direction = nextDirection;
-
-  const newHead = moveHeadPosition(snake[0]);
-  mouthOpen = !mouthOpen;
-
-  if (hitWall(newHead) || hitSelf(newHead)) {
-    endGame();
-    return;
+  if (running && !gameOver && time - lastMoveTime >= speed) {
+    tick();
+    lastMoveTime = time;
   }
 
-  snake.unshift(newHead);
-
-  if (item && positionsEqual(newHead, item)) {
-    score++;
-    updateBestScore();
-    updateLevelAndSpeed();
-    spawnItem();
-  } else {
-    snake.pop();
-    updateHud();
-  }
-
-  draw();
+  draw(time);
+  animationFrame = requestAnimationFrame(gameLoop);
 }
 
-function endGame() {
-  isGameOver = true;
-  isRunning = false;
-  clearInterval(gameInterval);
-  gameOverText.textContent = `Poäng: ${score} • Nivå: ${level}`;
-  gameOverOverlay.classList.remove("hidden");
-}
-
-function startGame() {
-  if (loadedCount < totalImages) return;
-  startOverlay.classList.add("hidden");
-  gameOverOverlay.classList.add("hidden");
-  isRunning = true;
-  restartLoop();
-  pauseButton.textContent = "Pausa";
-  draw();
-}
-
-function restartGame() {
-  clearInterval(gameInterval);
-  resetGameState();
-  gameOverOverlay.classList.add("hidden");
-  startOverlay.classList.add("hidden");
-  isRunning = true;
-  pauseButton.textContent = "Pausa";
-  restartLoop();
-  draw();
-}
-
-function togglePause() {
-  if (isGameOver) return;
-  if (loadedCount < totalImages) return;
-
-  if (!isRunning) {
-    isRunning = true;
-    pauseButton.textContent = "Pausa";
-    restartLoop();
-  } else {
-    isRunning = false;
-    pauseButton.textContent = "Fortsätt";
-    clearInterval(gameInterval);
-  }
-}
-
-function showStartOverlay() {
+function boot() {
+  resetState();
+  resizeCanvas();
   startOverlay.classList.remove("hidden");
+  animationFrame = requestAnimationFrame(gameLoop);
 }
 
-function waitForImages() {
-  if (loadedCount >= totalImages) {
-    resetGameState();
-    draw();
-    showStartOverlay();
+function waitForAssets() {
+  if (loadedImages >= totalImages) {
+    boot();
   } else {
-    setTimeout(waitForImages, 100);
+    setTimeout(waitForAssets, 100);
   }
 }
 
-waitForImages();
+waitForAssets();
