@@ -16,7 +16,6 @@ const resumeButton = document.getElementById("resumeButton");
 const restartButton = document.getElementById("restartButton");
 const pauseButton = document.getElementById("pauseButton");
 const resetButton = document.getElementById("resetButton");
-const controlButtons = document.querySelectorAll(".ctrl-btn");
 
 const GRID_SIZE = 15;
 const BASE_SPEED = 180;
@@ -24,8 +23,6 @@ const MIN_SPEED = 72;
 const SPEED_STEP = 12;
 
 let tileSize = 24;
-let lastTouchX = 0;
-let lastTouchY = 0;
 
 const collectibleFiles = [
   "bread.png",
@@ -60,16 +57,10 @@ collectibleFiles.forEach((file) => {
   loadImage(file, `/static/${file}`);
 });
 
-function resizeCanvas() {
-  const wrap = canvas.parentElement;
-  const size = Math.min(wrap.clientWidth, 560);
-  canvas.width = size;
-  canvas.height = size;
-  tileSize = canvas.width / GRID_SIZE;
-  draw();
-}
-
-window.addEventListener("resize", resizeCanvas);
+const bgMusic = new Audio("/static/Screen_Recording_20260330_191922_YouTube.wav");
+bgMusic.loop = true;
+bgMusic.volume = 0.45;
+bgMusic.preload = "auto";
 
 let snake = [];
 let direction = "RIGHT";
@@ -83,12 +74,23 @@ let speed = BASE_SPEED;
 
 let running = false;
 let gameOver = false;
-let loop = null;
 let mouthOpen = false;
 let lastMoveTime = 0;
 let animationFrame = null;
+let hasStartedOnce = false;
 
 bestScoreEl.textContent = bestScore;
+
+function resizeCanvas() {
+  const wrap = canvas.parentElement;
+  const size = Math.min(wrap.clientWidth, 560);
+  canvas.width = size;
+  canvas.height = size;
+  tileSize = canvas.width / GRID_SIZE;
+  draw();
+}
+
+window.addEventListener("resize", resizeCanvas);
 
 function gridPos(x, y) {
   return { x, y };
@@ -113,7 +115,7 @@ function setRandomItem() {
   }
 
   const file = collectibleFiles[Math.floor(Math.random() * collectibleFiles.length)];
-  item = { ...pos, file, pulse: 0 };
+  item = { ...pos, file };
 }
 
 function resetState() {
@@ -183,35 +185,41 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-controlButtons.forEach((button) => {
-  button.addEventListener("click", () => setDirection(button.dataset.dir));
-  button.addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    setDirection(button.dataset.dir);
-  }, { passive: false });
+function handlePointerControl(clientX, clientY) {
+  if (!snake.length || !running || gameOver) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const canvasX = clientX - rect.left;
+  const canvasY = clientY - rect.top;
+
+  const head = snake[0];
+  const headCenterX = head.x * tileSize + tileSize / 2;
+  const headCenterY = head.y * tileSize + tileSize / 2;
+
+  const dx = canvasX - headCenterX;
+  const dy = canvasY - headCenterY;
+
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+
+  let next;
+
+  if (absX > absY) {
+    next = dx > 0 ? "RIGHT" : "LEFT";
+  } else {
+    next = dy > 0 ? "DOWN" : "UP";
+  }
+
+  setDirection(next);
+}
+
+canvas.addEventListener("click", (e) => {
+  handlePointerControl(e.clientX, e.clientY);
 });
 
 canvas.addEventListener("touchstart", (e) => {
   const t = e.touches[0];
-  lastTouchX = t.clientX;
-  lastTouchY = t.clientY;
-}, { passive: true });
-
-canvas.addEventListener("touchend", (e) => {
-  const t = e.changedTouches[0];
-  const dx = t.clientX - lastTouchX;
-  const dy = t.clientY - lastTouchY;
-  const absX = Math.abs(dx);
-  const absY = Math.abs(dy);
-  const threshold = 18;
-
-  if (absX < threshold && absY < threshold) return;
-
-  if (absX > absY) {
-    setDirection(dx > 0 ? "RIGHT" : "LEFT");
-  } else {
-    setDirection(dy > 0 ? "DOWN" : "UP");
-  }
+  handlePointerControl(t.clientX, t.clientY);
 }, { passive: true });
 
 startButton.addEventListener("click", startGame);
@@ -220,20 +228,32 @@ restartButton.addEventListener("click", restartGame);
 pauseButton.addEventListener("click", togglePause);
 resetButton.addEventListener("click", restartGame);
 
+function startMusic() {
+  bgMusic.play().catch(() => {});
+}
+
+function pauseMusic() {
+  bgMusic.pause();
+}
+
 function startGame() {
   if (loadedImages < totalImages) return;
+
+  hasStartedOnce = true;
   startOverlay.classList.add("hidden");
   pauseOverlay.classList.add("hidden");
   gameOverOverlay.classList.add("hidden");
   running = true;
   gameOver = false;
   pauseButton.textContent = "Pausa";
+  startMusic();
 }
 
 function resumeGame() {
   pauseOverlay.classList.add("hidden");
   running = true;
   pauseButton.textContent = "Pausa";
+  startMusic();
 }
 
 function restartGame() {
@@ -242,7 +262,9 @@ function restartGame() {
   pauseOverlay.classList.add("hidden");
   gameOverOverlay.classList.add("hidden");
   running = true;
+  gameOver = false;
   pauseButton.textContent = "Pausa";
+  startMusic();
 }
 
 function togglePause() {
@@ -253,15 +275,17 @@ function togglePause() {
 
   if (!running) {
     pauseOverlay.classList.remove("hidden");
+    pauseMusic();
   } else {
     pauseOverlay.classList.add("hidden");
+    startMusic();
   }
 }
 
 function triggerCatchEffect() {
   catchFlash.classList.remove("hidden");
-  catchFlash.classList.remove("flash-restart");
   void catchFlash.offsetWidth;
+
   setTimeout(() => {
     catchFlash.classList.add("hidden");
   }, 220);
@@ -312,6 +336,7 @@ function tick() {
     updateBest();
     updateHud();
     triggerDeathEffect();
+    pauseMusic();
     gameOverText.textContent = `Poäng: ${score} • Nivå: ${level}`;
     gameOverOverlay.classList.remove("hidden");
     return;
@@ -451,12 +476,39 @@ function drawHead() {
   ctx.restore();
 }
 
+function drawAimHint() {
+  if (!snake.length || !running || gameOver) return;
+
+  const head = snake[0];
+  const px = head.x * tileSize;
+  const py = head.y * tileSize;
+  const centerX = px + tileSize / 2;
+  const centerY = py + tileSize / 2;
+
+  let arrowX = centerX;
+  let arrowY = centerY;
+
+  if (queuedDirection === "UP") arrowY -= tileSize * 0.9;
+  if (queuedDirection === "DOWN") arrowY += tileSize * 0.9;
+  if (queuedDirection === "LEFT") arrowX -= tileSize * 0.9;
+  if (queuedDirection === "RIGHT") arrowX += tileSize * 0.9;
+
+  ctx.save();
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = "#111827";
+  ctx.beginPath();
+  ctx.arc(arrowX, arrowY, tileSize * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function draw(time = 0) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawBackground();
   drawItem(time);
   drawBody();
   if (snake.length > 0) drawHead();
+  drawAimHint();
 }
 
 function gameLoop(time) {
