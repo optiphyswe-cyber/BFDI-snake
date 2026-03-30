@@ -1,11 +1,78 @@
 <!DOCTYPE html>
-<html>
+<html lang="sv">
 <head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>BFDI Snake</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <h1>BFDI Snake</h1>
+  <div class="app">
+    <header class="topbar">
+      <h1>BFDI Snake</h1>
+      <p class="subtitle">Samla figurerna och överlev längre för varje nivå</p>
+    </header>
+
+    <section class="hud">
+      <div class="hud-card">
+        <span class="hud-label">Poäng</span>
+        <span class="hud-value" id="score">0</span>
+      </div>
+      <div class="hud-card">
+        <span class="hud-label">Nivå</span>
+        <span class="hud-value" id="level">1</span>
+      </div>
+      <div class="hud-card">
+        <span class="hud-label">Bästa</span>
+        <span class="hud-value" id="bestScore">0</span>
+      </div>
+    </section>
+
+    <section class="game-area">
+      <div class="canvas-wrap">
+        <canvas id="gameCanvas" width="360" height="360"></canvas>
+
+        <div class="overlay hidden" id="startOverlay">
+          <div class="overlay-box">
+            <h2>Tryck för att spela</h2>
+            <p>Styr med swipe eller knapparna under spelet</p>
+            <button id="startButton">Starta</button>
+          </div>
+        </div>
+
+        <div class="overlay hidden" id="gameOverOverlay">
+          <div class="overlay-box">
+            <h2>Game Over</h2>
+            <p id="gameOverText">Du förlorade</p>
+            <button id="restartButton">Spela igen</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="controls-panel">
+      <div class="mobile-buttons">
+        <div></div>
+        <button class="ctrl-btn" data-dir="UP">▲</button>
+        <div></div>
+
+        <button class="ctrl-btn" data-dir="LEFT">◀</button>
+        <button class="ctrl-btn" data-dir="DOWN">▼</button>
+        <button class="ctrl-btn" data-dir="RIGHT">▶</button>
+      </div>
+
+      <div class="action-row">
+        <button id="pauseButton" class="action-btn">Pausa</button>
+        <button id="resetButton" class="action-btn secondary">Starta om</button>
+      </div>
+
+      <p class="help-text">
+        Mobil: swipe på spelplanen eller använd knapparna.<br />
+        Dator: piltangenter eller WASD.
+      </p>
+    </section>
+  </div>
+
   <script src="/static/script.js"></script>
 </body>
 </html>
