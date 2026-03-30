@@ -46,7 +46,7 @@
           <div class="overlay-card">
             <img src="/static/astor-oppen-mun.png" alt="Astor" class="overlay-astor" />
             <h2>Redo?</h2>
-            <p>Tryck start och peka sedan på spelplanen för att styra Astor.</p>
+            <p>Tryck start och styr sedan med spelplanen eller pilarna.</p>
             <button id="startButton">Starta spelet</button>
           </div>
         </div>
@@ -83,9 +83,18 @@
         <button id="resetButton" class="action-btn secondary">Starta om</button>
       </div>
 
+      <div class="mobile-pad">
+        <div></div>
+        <button class="ctrl-btn" data-dir="UP" aria-label="Upp">▲</button>
+        <div></div>
+
+        <button class="ctrl-btn" data-dir="LEFT" aria-label="Vänster">◀</button>
+        <button class="ctrl-btn" data-dir="DOWN" aria-label="Ner">▼</button>
+        <button class="ctrl-btn" data-dir="RIGHT" aria-label="Höger">▶</button>
+      </div>
+
       <p class="help-text">
-        Tryck på spelplanen där du vill att Astor ska svänga.<br />
-        Ovanför huvudet = upp, under = ner, vänster/höger fungerar likadant.<br />
+        Tryck på spelplanen där du vill att Astor ska svänga, eller använd pilarna.<br />
         Dator: piltangenter eller WASD fungerar också.
       </p>
     </section>
