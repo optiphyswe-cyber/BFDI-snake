@@ -1,339 +1,466 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { motion } from "framer-motion";
-import { RefreshCw, Play, Pause } from "lucide-react";
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
 
-const GRID_SIZE = 14;
-const INITIAL_SNAKE = [
-  { x: 4, y: 7 },
-  { x: 3, y: 7 },
-  { x: 2, y: 7 },
+const scoreEl = document.getElementById("score");
+const levelEl = document.getElementById("level");
+const bestScoreEl = document.getElementById("bestScore");
+
+const startOverlay = document.getElementById("startOverlay");
+const gameOverOverlay = document.getElementById("gameOverOverlay");
+const gameOverText = document.getElementById("gameOverText");
+
+const startButton = document.getElementById("startButton");
+const restartButton = document.getElementById("restartButton");
+const pauseButton = document.getElementById("pauseButton");
+const resetButton = document.getElementById("resetButton");
+
+const controlButtons = document.querySelectorAll(".ctrl-btn");
+
+const GRID_COUNT = 15;
+let tileSize = 24;
+
+const collectibleFiles = [
+  "bread.png",
+  "bubble.png",
+  "cheese.png",
+  "ice.png",
+  "leaf.png",
+  "pen.png",
+  "pin.png",
+  "red box.png"
 ];
 
-const THEMES = [
-  {
-    id: "leafy",
-    name: "Leafy",
-    head: "🍃",
-    body: "🟩",
-    food: "🔥",
-    accent: "from-green-400 to-lime-300",
-    bg: "bg-green-50",
-  },
-  {
-    id: "firey",
-    name: "Firey",
-    head: "🔥",
-    body: "🟧",
-    food: "💧",
-    accent: "from-orange-400 to-red-400",
-    bg: "bg-orange-50",
-  },
-  {
-    id: "bubble",
-    name: "Bubble",
-    head: "🫧",
-    body: "🟦",
-    food: "⭐",
-    accent: "from-sky-300 to-cyan-300",
-    bg: "bg-sky-50",
-  },
-  {
-    id: "rocky",
-    name: "Rocky",
-    head: "🪨",
-    body: "⬛",
-    food: "🍰",
-    accent: "from-slate-400 to-zinc-500",
-    bg: "bg-slate-50",
-  },
-];
+const images = {};
+let loadedCount = 0;
+let totalImages = collectibleFiles.length + 2;
 
-function randomFoodPosition(snake) {
-  const occupied = new Set(snake.map((s) => `${s.x},${s.y}`));
-  const free = [];
-  for (let y = 0; y < GRID_SIZE; y++) {
-    for (let x = 0; x < GRID_SIZE; x++) {
-      const key = `${x},${y}`;
-      if (!occupied.has(key)) free.push({ x, y });
-    }
-  }
-  return free[Math.floor(Math.random() * free.length)] || { x: 0, y: 0 };
+const astorOpen = new Image();
+astorOpen.src = "/static/astor-oppen-mun.png";
+astorOpen.onload = imageLoaded;
+
+const astorClosed = new Image();
+astorClosed.src = "/static/astor-stang-mun.png";
+astorClosed.onload = imageLoaded;
+
+images["astorOpen"] = astorOpen;
+images["astorClosed"] = astorClosed;
+
+collectibleFiles.forEach((file) => {
+  const img = new Image();
+  img.src = `/static/${file}`;
+  img.onload = imageLoaded;
+  images[file] = img;
+});
+
+function imageLoaded() {
+  loadedCount++;
 }
 
-function samePos(a, b) {
+function resizeCanvas() {
+  const size = Math.min(window.innerWidth - 20, 520);
+  const safeSize = Math.max(280, size);
+  canvas.width = safeSize;
+  canvas.height = safeSize;
+  tileSize = canvas.width / GRID_COUNT;
+}
+
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+let snake = [];
+let direction = "RIGHT";
+let nextDirection = "RIGHT";
+
+let item = null;
+let score = 0;
+let level = 1;
+let bestScore = Number(localStorage.getItem("bfdi-best-score") || 0);
+
+let gameInterval = null;
+let moveSpeed = 220;
+const minSpeed = 70;
+const levelStep = 18;
+
+let isRunning = false;
+let isGameOver = false;
+let mouthOpen = true;
+
+let touchStartX = 0;
+let touchStartY = 0;
+
+bestScoreEl.textContent = bestScore;
+
+function gridToPixel(value) {
+  return value * tileSize;
+}
+
+function randomGridPosition() {
+  return {
+    x: Math.floor(Math.random() * GRID_COUNT),
+    y: Math.floor(Math.random() * GRID_COUNT)
+  };
+}
+
+function positionsEqual(a, b) {
   return a.x === b.x && a.y === b.y;
 }
 
-export default function BFDISnakeMobileGame() {
-  const [themeId, setThemeId] = useState("leafy");
-  const [snake, setSnake] = useState(INITIAL_SNAKE);
-  const [direction, setDirection] = useState({ x: 1, y: 0 });
-  const [nextDirection, setNextDirection] = useState({ x: 1, y: 0 });
-  const [food, setFood] = useState({ x: 10, y: 7 });
-  const [score, setScore] = useState(0);
-  const [best, setBest] = useState(0);
-  const [isRunning, setIsRunning] = useState(false);
-  const [gameOver, setGameOver] = useState(false);
-  const [speed, setSpeed] = useState(180);
-  const touchStartRef = useRef(null);
+function getRandomCollectible() {
+  const randomIndex = Math.floor(Math.random() * collectibleFiles.length);
+  return collectibleFiles[randomIndex];
+}
 
-  const theme = useMemo(
-    () => THEMES.find((t) => t.id === themeId) || THEMES[0],
-    [themeId]
-  );
+function spawnItem() {
+  let newPos = randomGridPosition();
 
-  useEffect(() => {
-    const savedBest = Number(localStorage.getItem("bfdi-snake-best") || 0);
-    setBest(savedBest);
-  }, []);
+  while (snake.some(segment => positionsEqual(segment, newPos))) {
+    newPos = randomGridPosition();
+  }
 
-  const resetGame = useCallback(() => {
-    setSnake(INITIAL_SNAKE);
-    setDirection({ x: 1, y: 0 });
-    setNextDirection({ x: 1, y: 0 });
-    setFood(randomFoodPosition(INITIAL_SNAKE));
-    setScore(0);
-    setSpeed(180);
-    setGameOver(false);
-    setIsRunning(false);
-  }, []);
-
-  const queueDirection = useCallback((dir) => {
-    setNextDirection((current) => {
-      if (current.x + dir.x === 0 && current.y + dir.y === 0) return current;
-      return dir;
-    });
-  }, []);
-
-  useEffect(() => {
-    const onKey = (e) => {
-      if (["ArrowUp", "w", "W"].includes(e.key)) queueDirection({ x: 0, y: -1 });
-      if (["ArrowDown", "s", "S"].includes(e.key)) queueDirection({ x: 0, y: 1 });
-      if (["ArrowLeft", "a", "A"].includes(e.key)) queueDirection({ x: -1, y: 0 });
-      if (["ArrowRight", "d", "D"].includes(e.key)) queueDirection({ x: 1, y: 0 });
-      if (e.key === " ") setIsRunning((v) => !v);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [queueDirection]);
-
-  useEffect(() => {
-    if (!isRunning || gameOver) return;
-
-    const timer = setInterval(() => {
-      setSnake((currentSnake) => {
-        const appliedDir =
-          direction.x + nextDirection.x === 0 && direction.y + nextDirection.y === 0
-            ? direction
-            : nextDirection;
-
-        const head = currentSnake[0];
-        const newHead = {
-          x: head.x + appliedDir.x,
-          y: head.y + appliedDir.y,
-        };
-
-        setDirection(appliedDir);
-
-        const hitWall =
-          newHead.x < 0 ||
-          newHead.x >= GRID_SIZE ||
-          newHead.y < 0 ||
-          newHead.y >= GRID_SIZE;
-
-        const hitSelf = currentSnake.some((segment) => samePos(segment, newHead));
-
-        if (hitWall || hitSelf) {
-          setGameOver(true);
-          setIsRunning(false);
-          setBest((prev) => {
-            const updated = Math.max(prev, score);
-            localStorage.setItem("bfdi-snake-best", String(updated));
-            return updated;
-          });
-          return currentSnake;
-        }
-
-        const grew = samePos(newHead, food);
-        const nextSnake = [newHead, ...currentSnake];
-
-        if (!grew) nextSnake.pop();
-        else {
-          const newScore = score + 1;
-          setScore(newScore);
-          setFood(randomFoodPosition(nextSnake));
-          setSpeed((prev) => Math.max(90, prev - 6));
-          setBest((prev) => {
-            const updated = Math.max(prev, newScore);
-            localStorage.setItem("bfdi-snake-best", String(updated));
-            return updated;
-          });
-        }
-
-        return nextSnake;
-      });
-    }, speed);
-
-    return () => clearInterval(timer);
-  }, [direction, nextDirection, food, gameOver, isRunning, score, speed]);
-
-  const handleTouchStart = (e) => {
-    const touch = e.touches[0];
-    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  item = {
+    x: newPos.x,
+    y: newPos.y,
+    file: getRandomCollectible()
   };
+}
 
-  const handleTouchEnd = (e) => {
-    if (!touchStartRef.current) return;
-    const touch = e.changedTouches[0];
-    const dx = touch.clientX - touchStartRef.current.x;
-    const dy = touch.clientY - touchStartRef.current.y;
-    const absX = Math.abs(dx);
-    const absY = Math.abs(dy);
-    const threshold = 24;
+function resetGameState() {
+  snake = [
+    { x: 7, y: 7 },
+    { x: 6, y: 7 },
+    { x: 5, y: 7 }
+  ];
 
-    if (absX < threshold && absY < threshold) return;
+  direction = "RIGHT";
+  nextDirection = "RIGHT";
 
-    if (absX > absY) {
-      queueDirection(dx > 0 ? { x: 1, y: 0 } : { x: -1, y: 0 });
-    } else {
-      queueDirection(dy > 0 ? { x: 0, y: 1 } : { x: 0, y: -1 });
+  score = 0;
+  level = 1;
+  moveSpeed = 220;
+  isGameOver = false;
+  mouthOpen = true;
+
+  spawnItem();
+  updateHud();
+}
+
+function updateHud() {
+  scoreEl.textContent = score;
+  levelEl.textContent = level;
+  bestScoreEl.textContent = bestScore;
+}
+
+function updateBestScore() {
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem("bfdi-best-score", String(bestScore));
+    bestScoreEl.textContent = bestScore;
+  }
+}
+
+function updateLevelAndSpeed() {
+  level = Math.floor(score / 4) + 1;
+  moveSpeed = Math.max(minSpeed, 220 - (level - 1) * levelStep);
+  updateHud();
+  restartLoop();
+}
+
+function restartLoop() {
+  if (gameInterval) clearInterval(gameInterval);
+  if (isRunning && !isGameOver) {
+    gameInterval = setInterval(gameTick, moveSpeed);
+  }
+}
+
+function setDirection(newDir) {
+  if (newDir === "LEFT" && direction !== "RIGHT") nextDirection = "LEFT";
+  if (newDir === "RIGHT" && direction !== "LEFT") nextDirection = "RIGHT";
+  if (newDir === "UP" && direction !== "DOWN") nextDirection = "UP";
+  if (newDir === "DOWN" && direction !== "UP") nextDirection = "DOWN";
+}
+
+document.addEventListener("keydown", (e) => {
+  const key = e.key.toLowerCase();
+
+  if (key === "arrowleft" || key === "a") setDirection("LEFT");
+  if (key === "arrowright" || key === "d") setDirection("RIGHT");
+  if (key === "arrowup" || key === "w") setDirection("UP");
+  if (key === "arrowdown" || key === "s") setDirection("DOWN");
+
+  if (key === " ") {
+    e.preventDefault();
+    togglePause();
+  }
+});
+
+controlButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    setDirection(btn.dataset.dir);
+  });
+
+  btn.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    setDirection(btn.dataset.dir);
+  }, { passive: false });
+});
+
+canvas.addEventListener("touchstart", (e) => {
+  const touch = e.touches[0];
+  touchStartX = touch.clientX;
+  touchStartY = touch.clientY;
+}, { passive: true });
+
+canvas.addEventListener("touchend", (e) => {
+  const touch = e.changedTouches[0];
+  const dx = touch.clientX - touchStartX;
+  const dy = touch.clientY - touchStartY;
+
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+  const threshold = 20;
+
+  if (absX < threshold && absY < threshold) return;
+
+  if (absX > absY) {
+    if (dx > 0) setDirection("RIGHT");
+    else setDirection("LEFT");
+  } else {
+    if (dy > 0) setDirection("DOWN");
+    else setDirection("UP");
+  }
+}, { passive: true });
+
+startButton.addEventListener("click", startGame);
+restartButton.addEventListener("click", restartGame);
+pauseButton.addEventListener("click", togglePause);
+resetButton.addEventListener("click", restartGame);
+
+canvas.addEventListener("click", () => {
+  if (!isRunning && !isGameOver) startGame();
+});
+
+function drawBackground() {
+  for (let row = 0; row < GRID_COUNT; row++) {
+    for (let col = 0; col < GRID_COUNT; col++) {
+      ctx.fillStyle = (row + col) % 2 === 0 ? "#f8fafc" : "#eaf2ff";
+      ctx.fillRect(gridToPixel(col), gridToPixel(row), tileSize, tileSize);
     }
-  };
+  }
+}
 
-  const renderCell = (x, y) => {
-    const isHead = samePos(snake[0], { x, y });
-    const isBody = snake.slice(1).some((segment) => samePos(segment, { x, y }));
-    const isFood = samePos(food, { x, y });
+function drawItem() {
+  if (!item) return;
 
-    return (
-      <div
-        key={`${x}-${y}`}
-        className={`aspect-square rounded-xl border border-white/60 flex items-center justify-center text-[18px] sm:text-xl shadow-sm ${theme.bg}`}
-      >
-        {isHead ? theme.head : isFood ? theme.food : isBody ? theme.body : ""}
-      </div>
+  const img = images[item.file];
+  const px = gridToPixel(item.x);
+  const py = gridToPixel(item.y);
+  const padding = tileSize * 0.08;
+
+  if (img && img.complete) {
+    ctx.drawImage(
+      img,
+      px + padding,
+      py + padding,
+      tileSize - padding * 2,
+      tileSize - padding * 2
     );
-  };
+  } else {
+    ctx.fillStyle = "#ef4444";
+    ctx.beginPath();
+    ctx.arc(px + tileSize / 2, py + tileSize / 2, tileSize * 0.32, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
 
+function drawSnake() {
+  for (let i = snake.length - 1; i >= 0; i--) {
+    const seg = snake[i];
+    const px = gridToPixel(seg.x);
+    const py = gridToPixel(seg.y);
+
+    if (i === 0) {
+      drawAstorHead(px, py);
+    } else {
+      drawBodySegment(px, py, i);
+    }
+  }
+}
+
+function drawBodySegment(px, py, index) {
+  const radius = tileSize * 0.22;
+
+  ctx.fillStyle = index % 2 === 0 ? "#60a5fa" : "#3b82f6";
+  roundRect(ctx, px + tileSize * 0.08, py + tileSize * 0.08, tileSize * 0.84, tileSize * 0.84, radius);
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(255,255,255,0.45)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawAstorHead(px, py) {
+  const img = mouthOpen ? images.astorOpen : images.astorClosed;
+  const padding = tileSize * 0.02;
+  const centerX = px + tileSize / 2;
+  const centerY = py + tileSize / 2;
+
+  ctx.save();
+  ctx.translate(centerX, centerY);
+
+  let angle = 0;
+  if (direction === "RIGHT") angle = 0;
+  if (direction === "DOWN") angle = Math.PI / 2;
+  if (direction === "LEFT") angle = Math.PI;
+  if (direction === "UP") angle = -Math.PI / 2;
+
+  ctx.rotate(angle);
+
+  if (img && img.complete) {
+    ctx.drawImage(
+      img,
+      -tileSize / 2 + padding,
+      -tileSize / 2 + padding,
+      tileSize - padding * 2,
+      tileSize - padding * 2
+    );
+  } else {
+    ctx.fillStyle = "#f59e0b";
+    ctx.beginPath();
+    ctx.arc(0, 0, tileSize * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function roundRect(context, x, y, width, height, radius) {
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + radius);
+  context.lineTo(x + width, y + height - radius);
+  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  context.lineTo(x + radius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - radius);
+  context.lineTo(x, y + radius);
+  context.quadraticCurveTo(x, y, x + radius, y);
+  context.closePath();
+}
+
+function draw() {
+  drawBackground();
+  drawItem();
+  drawSnake();
+}
+
+function moveHeadPosition(head) {
+  const nextHead = { x: head.x, y: head.y };
+
+  if (nextDirection === "LEFT") nextHead.x -= 1;
+  if (nextDirection === "RIGHT") nextHead.x += 1;
+  if (nextDirection === "UP") nextHead.y -= 1;
+  if (nextDirection === "DOWN") nextHead.y += 1;
+
+  return nextHead;
+}
+
+function hitWall(head) {
   return (
-    <div className="min-h-screen w-full bg-gradient-to-b from-white via-slate-50 to-slate-100 p-4 md:p-8">
-      <div className="mx-auto max-w-md space-y-4">
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-4"
-        >
-          <Card className="rounded-3xl shadow-xl border-0">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-2xl font-bold">BFDI Snake</CardTitle>
-                  <p className="text-sm text-slate-600 mt-1">
-                    Mobilvänligt webspel med touch-swipe och knappkontroller.
-                  </p>
-                </div>
-                <div className={`h-12 w-12 rounded-2xl bg-gradient-to-br ${theme.accent} shadow-md`} />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-2xl bg-slate-100 p-3 text-center">
-                  <div className="text-xs text-slate-500">Poäng</div>
-                  <div className="text-2xl font-bold">{score}</div>
-                </div>
-                <div className="rounded-2xl bg-slate-100 p-3 text-center">
-                  <div className="text-xs text-slate-500">Bästa</div>
-                  <div className="text-2xl font-bold">{best}</div>
-                </div>
-                <div className="rounded-2xl bg-slate-100 p-3 text-center">
-                  <div className="text-xs text-slate-500">Tema</div>
-                  <div className="text-base font-semibold">{theme.name}</div>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {THEMES.map((t) => (
-                  <Button
-                    key={t.id}
-                    variant={themeId === t.id ? "default" : "outline"}
-                    className="rounded-2xl"
-                    onClick={() => setThemeId(t.id)}
-                  >
-                    {t.head} {t.name}
-                  </Button>
-                ))}
-              </div>
-
-              <div
-                className="select-none rounded-3xl bg-slate-900 p-3 shadow-inner touch-none"
-                onTouchStart={handleTouchStart}
-                onTouchEnd={handleTouchEnd}
-              >
-                <div className="grid grid-cols-14 gap-1">
-                  {Array.from({ length: GRID_SIZE }).map((_, y) =>
-                    Array.from({ length: GRID_SIZE }).map((_, x) => renderCell(x, y))
-                  )}
-                </div>
-              </div>
-
-              {gameOver && (
-                <div className="rounded-2xl bg-red-50 border border-red-200 p-4 text-center">
-                  <div className="text-lg font-bold text-red-700">Game over</div>
-                  <div className="text-sm text-red-600 mt-1">
-                    Du kraschade. Starta om och slå ditt rekord.
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3">
-                <Button
-                  className="rounded-2xl h-12 text-base"
-                  onClick={() => {
-                    if (gameOver) resetGame();
-                    setIsRunning((v) => !v);
-                  }}
-                >
-                  {isRunning ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
-                  {gameOver ? "Ny omgång" : isRunning ? "Pausa" : "Spela"}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="rounded-2xl h-12 text-base"
-                  onClick={resetGame}
-                >
-                  <RefreshCw className="mr-2 h-4 w-4" /> Starta om
-                </Button>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 max-w-[220px] mx-auto pt-1">
-                <div />
-                <Button variant="outline" className="rounded-2xl h-14" onClick={() => queueDirection({ x: 0, y: -1 })}>
-                  ⬆️
-                </Button>
-                <div />
-                <Button variant="outline" className="rounded-2xl h-14" onClick={() => queueDirection({ x: -1, y: 0 })}>
-                  ⬅️
-                </Button>
-                <Button variant="outline" className="rounded-2xl h-14" onClick={() => queueDirection({ x: 0, y: 1 })}>
-                  ⬇️
-                </Button>
-                <Button variant="outline" className="rounded-2xl h-14" onClick={() => queueDirection({ x: 1, y: 0 })}>
-                  ➡️
-                </Button>
-              </div>
-
-              <div className="flex flex-wrap gap-2 justify-center pt-1">
-                <Badge variant="secondary" className="rounded-xl px-3 py-1">Swipe för att styra</Badge>
-                <Badge variant="secondary" className="rounded-xl px-3 py-1">Mobilformat</Badge>
-                <Badge variant="secondary" className="rounded-xl px-3 py-1">Fungerar även med tangentbord</Badge>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-      </div>
-    </div>
+    head.x < 0 ||
+    head.y < 0 ||
+    head.x >= GRID_COUNT ||
+    head.y >= GRID_COUNT
   );
 }
+
+function hitSelf(head) {
+  return snake.some(segment => positionsEqual(segment, head));
+}
+
+function gameTick() {
+  if (!isRunning || isGameOver) return;
+
+  direction = nextDirection;
+
+  const newHead = moveHeadPosition(snake[0]);
+  mouthOpen = !mouthOpen;
+
+  if (hitWall(newHead) || hitSelf(newHead)) {
+    endGame();
+    return;
+  }
+
+  snake.unshift(newHead);
+
+  if (item && positionsEqual(newHead, item)) {
+    score++;
+    updateBestScore();
+    updateLevelAndSpeed();
+    spawnItem();
+  } else {
+    snake.pop();
+    updateHud();
+  }
+
+  draw();
+}
+
+function endGame() {
+  isGameOver = true;
+  isRunning = false;
+  clearInterval(gameInterval);
+  gameOverText.textContent = `Poäng: ${score} • Nivå: ${level}`;
+  gameOverOverlay.classList.remove("hidden");
+}
+
+function startGame() {
+  if (loadedCount < totalImages) return;
+  startOverlay.classList.add("hidden");
+  gameOverOverlay.classList.add("hidden");
+  isRunning = true;
+  restartLoop();
+  pauseButton.textContent = "Pausa";
+  draw();
+}
+
+function restartGame() {
+  clearInterval(gameInterval);
+  resetGameState();
+  gameOverOverlay.classList.add("hidden");
+  startOverlay.classList.add("hidden");
+  isRunning = true;
+  pauseButton.textContent = "Pausa";
+  restartLoop();
+  draw();
+}
+
+function togglePause() {
+  if (isGameOver) return;
+  if (loadedCount < totalImages) return;
+
+  if (!isRunning) {
+    isRunning = true;
+    pauseButton.textContent = "Pausa";
+    restartLoop();
+  } else {
+    isRunning = false;
+    pauseButton.textContent = "Fortsätt";
+    clearInterval(gameInterval);
+  }
+}
+
+function showStartOverlay() {
+  startOverlay.classList.remove("hidden");
+}
+
+function waitForImages() {
+  if (loadedCount >= totalImages) {
+    resetGameState();
+    draw();
+    showStartOverlay();
+  } else {
+    setTimeout(waitForImages, 100);
+  }
+}
+
+waitForImages();
