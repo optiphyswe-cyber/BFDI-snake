@@ -16,6 +16,7 @@ const resumeButton = document.getElementById("resumeButton");
 const restartButton = document.getElementById("restartButton");
 const pauseButton = document.getElementById("pauseButton");
 const resetButton = document.getElementById("resetButton");
+const controlButtons = document.querySelectorAll(".ctrl-btn");
 
 const GRID_SIZE = 15;
 const BASE_SPEED = 180;
@@ -77,7 +78,6 @@ let gameOver = false;
 let mouthOpen = false;
 let lastMoveTime = 0;
 let animationFrame = null;
-let hasStartedOnce = false;
 
 bestScoreEl.textContent = bestScore;
 
@@ -185,6 +185,17 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+controlButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setDirection(button.dataset.dir);
+  });
+
+  button.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    setDirection(button.dataset.dir);
+  }, { passive: false });
+});
+
 function handlePointerControl(clientX, clientY) {
   if (!snake.length || !running || gameOver) return;
 
@@ -239,7 +250,6 @@ function pauseMusic() {
 function startGame() {
   if (loadedImages < totalImages) return;
 
-  hasStartedOnce = true;
   startOverlay.classList.add("hidden");
   pauseOverlay.classList.add("hidden");
   gameOverOverlay.classList.add("hidden");
